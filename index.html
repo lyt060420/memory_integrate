@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="VLA-Agent-MemoryBench 任务视频矩阵：按任务对比 harness 与模型的 rollout、tokens 和费用。">
+    <title>Task Rollouts · VLA-Agent-MemoryBench</title>
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="data.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="header-topline"><span class="eyebrow">TASK ROLLOUTS</span><span class="project-tag">VISUAL MEMORY BENCHMARK</span></div>
+      <h1>VLA-Agent-MemoryBench</h1>
+      <p class="intro">观察任务执行过程，对比不同 harness 与模型的视觉记忆表现。</p>
+      <div class="demo-notice"><span class="status-dot" aria-hidden="true"></span><strong>示例数据（demo），待替换</strong><span>任务、harness、模型与数值仅作界面演示，不代表真实实验结果。</span></div>
+    </header>
+
+    <main class="workspace">
+      <aside class="task-sidebar" aria-label="任务选择">
+        <details class="task-panel" open>
+          <summary><span>任务列表 <span class="english-label">Task list</span></span><span class="collapse-label">展开 / 收起</span></summary>
+          <div class="task-panel-body">
+            <label class="search-label" for="task-search">搜索任务</label>
+            <div class="search-wrap"><span aria-hidden="true">⌕</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off" spellcheck="false"></div>
+            <p id="task-count" class="task-count" aria-live="polite"></p>
+            <nav id="task-list" class="task-list" aria-label="任务列表"></nav>
+          </div>
+        </details>
+      </aside>
+
+      <section class="content-panel" aria-labelledby="task-title">
+        <div class="content-heading">
+          <div><div class="eyebrow section-eyebrow">TASK EXPLORER</div><h2 id="task-title">任务视频矩阵</h2><p id="task-description" class="task-description"></p></div>
+          <span class="demo-badge">DEMO</span>
+        </div>
+        <div class="matrix-toolbar"><p id="matrix-summary" aria-live="polite"></p><span class="interaction-hint">点击方格查看视频与用量 <span aria-hidden="true">↗</span></span></div>
+        <div id="matrix-container"></div>
+        <p class="matrix-footnote">列：Harness · 行：模型 <span>视频与用量独立配置，空方格也可查看详情。</span></p>
+      </section>
+    </main>
+
+    <footer class="page-footer"><span>VLA-Agent-MemoryBench</span><span>Task rollouts / 示例预览 · 本地视频导入就绪</span></footer>
+    <noscript><p class="noscript-notice">请启用 JavaScript，以加载本地 data.js 并浏览任务矩阵。</p></noscript>
+
+    <dialog id="result-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-subtitle">
+      <div class="dialog-shell">
+        <header class="dialog-header"><div><span class="eyebrow">ROLLOUT DETAILS · DEMO</span><h2 id="dialog-title"></h2><p id="dialog-subtitle"></p></div><button id="dialog-close" class="close-button" type="button" aria-label="关闭详情">×</button></header>
+        <div id="dialog-media" class="dialog-media"></div>
+        <div class="dialog-details"><p class="dialog-demo">示例数据（demo），待替换 · 非真实实验结果</p><dl id="result-details" class="detail-grid"></dl><p id="result-note" class="result-note" hidden></p></div>
+      </div>
+    </dialog>
+  </body>
+</html>
