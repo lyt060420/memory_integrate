@@ -11,15 +11,11 @@
   const taskList = document.getElementById("task-list");
   const matrix = document.getElementById("matrix-container");
   const dialog = document.getElementById("result-dialog");
-  const dialogControls = document.getElementById("dialog-controls");
   const media = document.getElementById("dialog-media");
-  const HISTORY_KEYS = ["history_0", "history_1"];
+  const cellStates = new Map();
   let activeTask = null;
   let previousFocus = null;
-  // 每个方格各自的 pair/history 选择：key = taskId|modelId|harnessId；切换任务时清空。
-  let cellState = new Map();
-  // 弹窗当前查看的方格与选择，弹窗内切换 pair/history 时只重渲染弹窗内容。
-  let dialogState = null;
+  let dialogContext = null;
 
   document.querySelector(".demo-notice").hidden = !isDemo;
   document.querySelector(".demo-badge").hidden = !isDemo;
@@ -44,15 +40,45 @@
     return state;
   }
 
-  function getResult(taskId, modelId, harnessId) {
-    return data.results?.[taskId]?.[modelId]?.[harnessId] || {};
-  }
-
   function hasValue(value) {
     return value !== undefined && value !== null && value !== "";
   }
 
-  // 拒绝外部地址与脚本协议，保持图片、视频及封面为离线可用的相对路径。
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function getResult(taskId, modelId, harnessId) {
+    return data.results?.[taskId]?.[modelId]?.[harnessId] || {};
+  }
+
+  // 兼容旧版直接存放 video/tokens 等字段的 result。
+  function normalizeResult(result) {
+    if (!isRecord(result)) return [];
+
+    if (Array.isArray(result.pairs)) {
+      return result.pairs.map((source, index) => {
+        const pair = isRecord(source) ? source : {};
+        return {
+          ...pair,
+          id: hasValue(pair.id) ? String(pair.id) : `pair_${String(index + 1).padStart(3, "0")}`,
+          history_0: isRecord(pair.history_0) ? pair.history_0 : {},
+          history_1: isRecord(pair.history_1) ? pair.history_1 : {}
+        };
+      });
+    }
+
+    if (!Object.keys(result).length) return [];
+    return [{
+      id: "legacy",
+      inputImage: result.inputImage,
+      note: result.note,
+      history_0: result,
+      history_1: {}
+    }];
+  }
+
+  // 拒绝外部地址与脚本协议，保持图片、视频及封面为相对路径。
   function localAsset(value) {
     if (typeof value !== "string") return "";
     const path = value.trim();
@@ -60,68 +86,21 @@
     return path;
   }
 
-  // 把 result 统一成 pairs 结构；旧格式（没有 pairs、直接是单条 branch）包成 legacy pair 以兼容。
-  function getPairs(result) {
-    if (Array.isArray(result?.pairs)) return result.pairs;
-    if (result && Object.keys(result).length) {
-      return [{ id: null, legacy: true, inputImage: result.inputImage || "", history_0: result, history_1: null }];
-    }
-    return [];
+  function statusInfo(success) {
+    if (success === true) return { label: "成功", className: "success" };
+    if (success === false) return { label: "失败", className: "failure" };
+    return { label: "未知", className: "unknown" };
   }
 
-  function branchOf(pair, historyKey) {
-    return (pair && pair[historyKey]) || {};
-  }
-
-  function inputImageOf(pair, branch) {
-    return localAsset(branch?.image) || localAsset(pair?.inputImage);
-  }
-
-  function successOf(branch) {
-    if (branch?.success === true) return "success";
-    if (branch?.success === false) return "failure";
-    return "unknown";
-  }
-
-  function successText(branch) {
-    const s = successOf(branch);
-    return s === "success" ? "成功" : s === "failure" ? "失败" : "结果待导入";
-  }
-
-  function successBadge(branch) {
-    return element("span", `badge ${successOf(branch)}`, successText(branch));
-  }
-
-  function stateFor(taskId, modelId, harnessId, pairCount) {
-    const key = `${taskId}|${modelId}|${harnessId}`;
-    let st = cellState.get(key);
-    if (!st) { st = { pairIndex: 0, history: "history_0" }; cellState.set(key, st); }
-    if (st.pairIndex >= pairCount) st.pairIndex = Math.max(0, pairCount - 1);
-    if (!HISTORY_KEYS.includes(st.history)) st.history = "history_0";
-    return st;
-  }
-
-  // 输入（图片）区：pair 级共享图或 branch 自带图；无图与加载失败都有占位，不出现裂图。
-  function createInputImage(pair, branch, large = false) {
-    const wrap = element("div", "media-block");
-    wrap.append(element("span", "media-label", "输入 · INPUT"));
-    const path = inputImageOf(pair, branch);
-    if (!path) { wrap.append(emptyState("输入图片 · 待导入", !large)); return wrap; }
-    const holder = element("div", large ? "input-wrapper large" : "input-wrapper");
-    const img = element("img");
-    img.alt = "输入图片";
-    img.addEventListener("error", () => {
-      holder.replaceChildren(emptyState("输入图片无法加载 · 请检查路径", !large));
-    }, { once: true });
-    img.src = path;
-    holder.append(img);
-    wrap.append(holder);
-    return wrap;
+  function resultBadge(success) {
+    const status = statusInfo(success);
+    return element("span", `result-badge status-${status.className}`, status.label);
   }
 
   function createVideo(result, large = false) {
-    const path = localAsset(result.video);
+    const path = localAsset(result?.video);
     if (!path) return emptyState("暂无视频 · 待导入", !large);
+
     const wrapper = element("div", large ? "video-wrapper large" : "video-wrapper");
     const video = element("video");
     video.controls = large;
@@ -129,62 +108,80 @@
     video.playsInline = true;
     video.preload = "metadata";
     video.setAttribute("aria-label", large ? "任务视频播放器" : "任务视频预览");
-    const poster = localAsset(result.poster);
+
+    const poster = localAsset(result?.poster);
     if (poster) {
       video.poster = poster;
       const image = new Image();
       image.onerror = () => video.removeAttribute("poster");
       image.src = poster;
     }
+
     video.addEventListener("error", () => {
       video.pause();
       wrapper.replaceChildren(emptyState("视频无法加载 · 请检查文件路径或编码", !large));
     }, { once: true });
+
     video.src = path;
     wrapper.append(video);
     if (!large) wrapper.append(element("span", "play-overlay", "▷"));
     return wrapper;
   }
 
-  // 输出（视频）区，带标注，与输入区分开。
-  function createOutputVideo(branch, large = false) {
-    const wrap = element("div", "media-block");
-    wrap.append(element("span", "media-label", "输出 · OUTPUT"));
-    wrap.append(createVideo(branch, large));
-    return wrap;
+  function createInputPanel(pair, branch, large = false) {
+    const panel = element("section", "media-panel input-panel");
+    panel.append(element("span", "media-label", "输入"));
+
+    const branchImage = localAsset(branch?.image);
+    const path = branchImage || localAsset(pair?.inputImage);
+    if (!path) {
+      panel.append(emptyState("暂无输入图 · 待导入", !large));
+      return panel;
+    }
+
+    const wrapper = element("div", large ? "image-wrapper large" : "image-wrapper");
+    const image = element("img");
+    image.alt = `${pair?.id || "当前 Pair"} 输入图片`;
+    image.loading = large ? "eager" : "lazy";
+    image.decoding = "async";
+    image.addEventListener("error", () => {
+      wrapper.replaceChildren(emptyState("输入图无法加载 · 请检查文件路径", !large));
+    }, { once: true });
+    image.src = path;
+    wrapper.append(image);
+    panel.append(wrapper);
+    return panel;
   }
 
-  // pair 切换条（上一对/下一对 + pair id 与序号）；onChange 回调由方格或弹窗提供。
-  function createPairBar(pair, pairIndex, pairCount, onChange) {
-    const bar = element("div", "pair-bar");
-    const prev = element("button", "pair-nav", "‹");
-    prev.type = "button";
-    prev.setAttribute("aria-label", "上一个 pair");
-    prev.disabled = pairCount <= 1 || pairIndex <= 0;
-    prev.addEventListener("click", () => onChange(pairIndex - 1));
-    const label = element("span", "pair-label", pair?.id ? `${pair.id} · ${pairIndex + 1}/${pairCount}` : `${pairIndex + 1}/${pairCount}`);
-    const next = element("button", "pair-nav", "›");
-    next.type = "button";
-    next.setAttribute("aria-label", "下一个 pair");
-    next.disabled = pairCount <= 1 || pairIndex >= pairCount - 1;
-    next.addEventListener("click", () => onChange(pairIndex + 1));
-    bar.append(prev, label, next);
-    return bar;
+  function createOutputPanel(branch, large = false) {
+    const panel = element("section", "media-panel output-panel");
+    panel.append(element("span", "media-label", "输出"));
+    panel.append(createVideo(branch || {}, large));
+    return panel;
   }
 
-  // history_0 / history_1 切换钮；legacy 单条记录不显示（pair.history_1 为 null）。
-  function createHistoryTabs(pair, current, onChange) {
-    if (!pair || pair.legacy) return null;
-    const tabs = element("div", "history-tabs");
-    HISTORY_KEYS.forEach(key => {
-      const tab = element("button", "history-tab", key);
-      tab.type = "button";
-      if (key === current) tab.classList.add("active");
-      tab.setAttribute("aria-pressed", key === current ? "true" : "false");
-      tab.addEventListener("click", () => onChange(key));
-      tabs.append(tab);
-    });
-    return tabs;
+  function cellKey(task, model, harness) {
+    return JSON.stringify([task?.id, model?.id, harness?.id]);
+  }
+
+  function getCellState(task, model, harness) {
+    const key = cellKey(task, model, harness);
+    if (!cellStates.has(key)) {
+      cellStates.set(key, { pairIndex: 0, history: "history_0" });
+    }
+    const state = cellStates.get(key);
+    if (state.history !== "history_0" && state.history !== "history_1") state.history = "history_0";
+    return { key, state };
+  }
+
+  function selectedPair(pairs, state) {
+    if (!pairs.length) return null;
+    state.pairIndex = Math.max(0, Math.min(state.pairIndex, pairs.length - 1));
+    return pairs[state.pairIndex] || null;
+  }
+
+  function selectedBranch(pair, state) {
+    return pair && isRecord(pair[state.history]) ? pair[state.history] : {};
   }
 
   function renderTaskList() {
@@ -193,11 +190,15 @@
     document.getElementById("task-count").textContent = query
       ? `${filtered.length} / ${tasks.length} 个任务${demoSuffix}`
       : `${tasks.length} 个任务${demoSuffix}`;
+
     taskList.replaceChildren();
     if (!filtered.length) {
-      taskList.append(emptyState(tasks.length ? "未找到匹配任务，请尝试其他关键词。" : "暂无任务，请在 data.js 中添加。", true));
+      taskList.append(emptyState(tasks.length
+        ? "未找到匹配任务，请尝试其他关键词。"
+        : "暂无任务，请在 data.js 中添加。", true));
       return;
     }
+
     filtered.forEach(task => {
       const button = element("button", "task-item");
       button.type = "button";
@@ -211,118 +212,222 @@
     });
   }
 
+  function makeCellControl(label, className, ariaLabel, disabled, model, harness, controlName, action) {
+    const button = element("button", className, label);
+    button.type = "button";
+    button.disabled = Boolean(disabled);
+    button.setAttribute("aria-label", ariaLabel);
+    button.dataset.modelId = String(model.id);
+    button.dataset.harnessId = String(harness.id);
+    button.dataset.control = controlName;
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!button.disabled) action();
+    });
+    return button;
+  }
+
+  function renderMatrixAndRestoreControlFocus(model, harness, controlName) {
+    renderMatrix();
+    const match = Array.from(matrix.querySelectorAll("button[data-control]")).find(button =>
+      button.dataset.modelId === String(model.id) &&
+      button.dataset.harnessId === String(harness.id) &&
+      button.dataset.control === controlName
+    );
+    if (match) match.focus();
+  }
+
+  function createResultCell(model, harness, result) {
+    const pairs = normalizeResult(result);
+    const { state } = getCellState(activeTask, model, harness);
+    const pair = selectedPair(pairs, state);
+    const branch = selectedBranch(pair, state);
+    const card = element("div", "result-cell");
+
+    const pairControls = element("div", "pair-controls");
+    const pairPosition = element("span", "pair-position");
+    pairPosition.textContent = pair
+      ? `${pair.id} · ${state.pairIndex + 1} / ${pairs.length}`
+      : "暂无 Pair · 0 / 0";
+
+    const previousPair = makeCellControl(
+      "‹",
+      "pair-control-button",
+      "上一对 Pair",
+      pairs.length < 2 || state.pairIndex <= 0,
+      model,
+      harness,
+      "pair-prev",
+      () => {
+        state.pairIndex -= 1;
+        renderMatrixAndRestoreControlFocus(model, harness, "pair-prev");
+      }
+    );
+    const nextPair = makeCellControl(
+      "›",
+      "pair-control-button",
+      "下一对 Pair",
+      pairs.length < 2 || state.pairIndex >= pairs.length - 1,
+      model,
+      harness,
+      "pair-next",
+      () => {
+        state.pairIndex += 1;
+        renderMatrixAndRestoreControlFocus(model, harness, "pair-next");
+      }
+    );
+    pairControls.append(previousPair, pairPosition, nextPair);
+
+    const historyControls = element("div", "branch-controls");
+    ["history_0", "history_1"].forEach(history => {
+      const button = makeCellControl(
+        history,
+        `history-toggle${state.history === history ? " selected" : ""}`,
+        `切换到 ${history}`,
+        !pair,
+        model,
+        harness,
+        history,
+        () => {
+          state.history = history;
+          renderMatrixAndRestoreControlFocus(model, harness, history);
+        }
+      );
+      button.setAttribute("aria-pressed", String(state.history === history));
+      historyControls.append(button);
+    });
+
+    const main = element("div", "result-main");
+    main.tabIndex = 0;
+    main.setAttribute("role", "button");
+    main.setAttribute(
+      "aria-label",
+      `查看 ${activeTask.name || activeTask.id} / ${model.name || model.id} / ${harness.name || harness.id} 的 Pair、输入图、输出视频与用量${isDemo ? "（demo）" : ""}`
+    );
+    main.dataset.modelId = String(model.id);
+    main.dataset.harnessId = String(harness.id);
+
+    const mediaGrid = element("div", "cell-media-grid");
+    mediaGrid.append(createInputPanel(pair, branch), createOutputPanel(branch));
+    main.append(mediaGrid);
+
+    const bottom = element("div", "cell-bottom");
+    bottom.append(
+      resultBadge(branch.success),
+      element("span", "cell-status", pair ? (isDemo ? "示例记录 · DEMO" : "实验记录") : "等待导入"),
+      element("span", "cell-link", "查看详情 ↗")
+    );
+    main.append(bottom);
+    main.addEventListener("click", () => openResult(model, harness, pairs, state, main));
+    main.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openResult(model, harness, pairs, state, main);
+    });
+
+    card.append(pairControls, historyControls, main);
+    return card;
+  }
+
   function renderMatrix() {
     matrix.replaceChildren();
-    document.getElementById("task-title").textContent = activeTask ? (activeTask.name || activeTask.id) : "暂无任务";
-    document.getElementById("task-description").textContent = activeTask?.description || "选择任务，查看 harness × 模型的视频与用量。";
+    document.getElementById("task-title").textContent = activeTask
+      ? (activeTask.name || activeTask.id)
+      : "暂无任务";
+    document.getElementById("task-description").textContent = activeTask?.description
+      || "选择任务，查看 harness × 模型的视频、输入图与用量。";
+
     const summary = document.getElementById("matrix-summary");
     if (!activeTask || !harnesses.length || !models.length) {
       summary.textContent = "暂无可展示的组合";
-      matrix.append(emptyState(!activeTask ? "暂无任务，请在 data.js 的 tasks 中添加。" : "暂无 harness 或模型，请在 data.js 中配置表格行列。"));
+      matrix.append(emptyState(!activeTask
+        ? "暂无任务，请在 data.js 的 tasks 中添加。"
+        : "暂无 harness 或模型，请在 data.js 中配置表格行列。"));
       return;
     }
+
     let entryCount = 0;
-    let pairTotal = 0;
+    let pairCount = 0;
     models.forEach(model => harnesses.forEach(harness => {
-      const result = getResult(activeTask.id, model.id, harness.id);
-      if (Object.keys(result).length) entryCount += 1;
-      pairTotal += getPairs(result).filter(p => !p.legacy).length;
+      const pairs = normalizeResult(getResult(activeTask.id, model.id, harness.id));
+      if (pairs.length) {
+        entryCount += 1;
+        pairCount += pairs.length;
+      }
     }));
-    summary.textContent = `${entryCount} 个${isDemo ? "示例" : "结果"}条目 / ${harnesses.length * models.length} 个组合 · 共 ${pairTotal} 个 pair · ${harnesses.length} harness × ${models.length} 模型`;
-    if (!entryCount) matrix.append(element("p", "empty-results-notice", "此任务暂无结果，以下为空组合；点击方格可查看待导入详情。"));
+    summary.textContent = `${entryCount} 个${isDemo ? "示例" : "结果"}组合，${pairCount} 个 Pair / ${harnesses.length * models.length} 个组合 · ${harnesses.length} harness × ${models.length} 模型`;
+
+    if (!entryCount) {
+      matrix.append(element("p", "empty-results-notice", "此任务暂无结果，以下为空组合；点击方格可查看待导入详情。"));
+    }
+
     const scroll = element("div", "table-scroll");
     scroll.tabIndex = 0;
     scroll.setAttribute("role", "region");
     scroll.setAttribute("aria-label", "任务视频矩阵，窄屏可左右滚动");
+
     const table = element("table", "rollout-table");
-    table.style.minWidth = `${Math.max(640, 182 + harnesses.length * 240)}px`;
-    const caption = element("caption", "sr-only", `${activeTask.name || activeTask.id}：列为 harness，行为模型。${isDemo ? "所有条目为待替换 demo。" : ""}`);
+    table.style.minWidth = `${Math.max(640, 182 + harnesses.length * 220)}px`;
+    const caption = element(
+      "caption",
+      "sr-only",
+      `${activeTask.name || activeTask.id}：列为 harness，行为模型。${isDemo ? "所有条目为待替换 demo。" : ""}`
+    );
+
     const head = element("thead");
     const headRow = element("tr");
     const corner = element("th", "corner-cell");
     corner.scope = "col";
-    corner.append(element("span", "corner-label", "模型 / HARNESS"), element("span", "corner-task", activeTask.name || activeTask.id));
+    corner.append(
+      element("span", "corner-label", "模型 / HARNESS"),
+      element("span", "corner-task", activeTask.name || activeTask.id)
+    );
     headRow.append(corner);
+
     harnesses.forEach(harness => {
       const header = element("th", "harness-header");
       header.scope = "col";
-      header.append(element("span", "", harness.name || harness.id), element("span", "header-caption", `HARNESS${demoSuffix}`));
+      header.append(
+        element("span", "", harness.name || harness.id),
+        element("span", "header-caption", `HARNESS${demoSuffix}`)
+      );
       headRow.append(header);
     });
     head.append(headRow);
+
     const body = element("tbody");
     models.forEach(model => {
       const row = element("tr");
       const label = element("th", "model-header");
       label.scope = "row";
-      label.append(element("span", "", model.name || model.id), element("span", "header-caption", `MODEL${demoSuffix}`));
+      label.append(
+        element("span", "", model.name || model.id),
+        element("span", "header-caption", `MODEL${demoSuffix}`)
+      );
       row.append(label);
+
       harnesses.forEach(harness => {
         const cell = element("td");
-        cell.append(buildCell(model, harness));
+        cell.append(createResultCell(
+          model,
+          harness,
+          getResult(activeTask.id, model.id, harness.id)
+        ));
         row.append(cell);
       });
       body.append(row);
     });
+
     table.append(caption, head, body);
     scroll.append(table);
     matrix.append(scroll);
   }
 
-  // 一个方格：pair 切换条 + history 切换钮 +（输入图 / 输出视频）主体（点击开弹窗）+ 底部结果徽标。
-  function buildCell(model, harness) {
-    const result = getResult(activeTask.id, model.id, harness.id);
-    const pairs = getPairs(result);
-    const container = element("div", "result-cell");
-    if (!pairs.length) {
-      const openArea = element("div", "cell-media");
-      openArea.setAttribute("role", "button");
-      openArea.tabIndex = 0;
-      openArea.setAttribute("aria-label", `查看 ${activeTask.name || activeTask.id} / ${model.name || model.id} / ${harness.name || harness.id} 的详情${isDemo ? "（demo）" : ""}`);
-      openArea.append(emptyState("暂无数据 · 待导入", true));
-      const open = () => openResult(model, harness, { pairIndex: 0, history: "history_0" });
-      openArea.addEventListener("click", open);
-      openArea.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
-      container.append(openArea);
-      const bottom = element("span", "cell-bottom");
-      bottom.append(element("span", "cell-status", "等待导入"), element("span", "cell-link", "查看详情 ↗"));
-      container.append(bottom);
-      return container;
-    }
-    const st = stateFor(activeTask.id, model.id, harness.id, pairs.length);
-    const pair = pairs[st.pairIndex];
-    const branch = branchOf(pair, st.history);
-    if (pairs.length > 1 || pair.id) {
-      container.append(createPairBar(pair, st.pairIndex, pairs.length, idx => {
-        st.pairIndex = idx;
-        renderMatrix();
-      }));
-    }
-    const tabs = createHistoryTabs(pair, st.history, key => {
-      st.history = key;
-      renderMatrix();
-    });
-    if (tabs) container.append(tabs);
-    const openArea = element("div", "cell-media");
-    openArea.setAttribute("role", "button");
-    openArea.tabIndex = 0;
-    openArea.setAttribute("aria-label", `查看 ${activeTask.name || activeTask.id} / ${model.name || model.id} / ${harness.name || harness.id} / ${pair.id || "单条记录"} / ${st.history} 的视频、tokens 和价格${isDemo ? "（demo）" : ""}`);
-    openArea.append(createInputImage(pair, branch), createOutputVideo(branch));
-    const open = () => openResult(model, harness, { pairIndex: st.pairIndex, history: st.history });
-    openArea.addEventListener("click", open);
-    openArea.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
-    container.append(openArea);
-    const bottom = element("span", "cell-bottom");
-    const left = element("span", "cell-status");
-    left.append(successBadge(branch), document.createTextNode(pair.legacy ? " 单条记录" : ` ${st.history}`));
-    bottom.append(left, element("span", "cell-link", "查看详情 ↗"));
-    container.append(bottom);
-    return container;
-  }
-
   function selectTask(task, updateUrl = false) {
     activeTask = task;
-    cellState = new Map();
+    // 切换任务后，各方格从第一个 Pair 与 history_0 开始。
+    cellStates.clear();
     if (updateUrl && task) {
       // hash 在 file:// 与静态服务器下均可用，并保留其他查询参数。
       const hash = `#task=${encodeURIComponent(task.id)}`;
@@ -340,62 +445,65 @@
   }
 
   function addDetail(label, value) {
-    const pairEl = element("div", "detail-pair");
-    const dd = element("dd", "");
-    if (value instanceof Node) dd.append(value); else dd.textContent = String(value);
-    pairEl.append(element("dt", "", label), dd);
-    document.getElementById("result-details").append(pairEl);
+    const pair = element("div", "detail-pair");
+    pair.append(element("dt", "", label), element("dd", "", value));
+    document.getElementById("result-details").append(pair);
+  }
+
+  function formatCost(branch) {
+    if (!hasValue(branch?.cost)) return "待导入";
+    return `${branch.cost}${hasValue(branch.currency) ? ` ${branch.currency}` : "（币种待导入）"}`;
+  }
+
+  function currentDialogPair() {
+    if (!dialogContext) return null;
+    return selectedPair(dialogContext.pairs, dialogContext.state);
   }
 
   function renderDialog() {
-    if (!dialogState) return;
-    const { model, harness } = dialogState;
-    const result = getResult(activeTask.id, model.id, harness.id);
-    const pairs = getPairs(result);
-    document.getElementById("dialog-title").textContent = activeTask.name || activeTask.id;
-    document.getElementById("dialog-subtitle").textContent = `${harness.name || harness.id} / ${model.name || model.id}`;
-    dialogControls.replaceChildren();
-    media.replaceChildren();
-    document.getElementById("result-details").replaceChildren();
-    const compare = document.getElementById("result-compare");
-    compare.hidden = true;
-    compare.replaceChildren();
-    const note = document.getElementById("result-note");
-    note.hidden = true;
-    note.textContent = "";
-    if (!pairs.length) {
-      media.append(emptyState("暂无数据 · 待导入"));
-      addDetail("任务", activeTask.name || activeTask.id);
-      addDetail("Harness", harness.name || harness.id);
-      addDetail("模型", model.name || model.id);
-      addDetail("结果", "待导入");
-      return;
-    }
-    if (dialogState.pairIndex >= pairs.length) dialogState.pairIndex = pairs.length - 1;
-    const pair = pairs[dialogState.pairIndex];
-    if (pair.legacy) dialogState.history = "history_0";
-    const branch = branchOf(pair, dialogState.history);
-    if (pairs.length > 1 || pair.id) {
-      dialogControls.append(createPairBar(pair, dialogState.pairIndex, pairs.length, idx => {
-        dialogState.pairIndex = idx;
-        renderDialog();
-      }));
-    }
-    const tabs = createHistoryTabs(pair, dialogState.history, key => {
-      dialogState.history = key;
-      renderDialog();
+    if (!dialogContext) return;
+
+    const { task, model, harness, pairs, state } = dialogContext;
+    const pair = selectedPair(pairs, state);
+    const branch = selectedBranch(pair, state);
+    const taskName = task.name || task.id;
+
+    document.getElementById("dialog-title").textContent = taskName;
+    document.getElementById("dialog-subtitle").textContent =
+      `${harness.name || harness.id} / ${model.name || model.id}`;
+
+    const pairPosition = document.getElementById("dialog-pair-position");
+    pairPosition.textContent = pair
+      ? `${pair.id} · ${state.pairIndex + 1} / ${pairs.length}`
+      : "暂无 Pair · 0 / 0";
+    document.getElementById("dialog-pair-prev").disabled =
+      pairs.length < 2 || state.pairIndex <= 0;
+    document.getElementById("dialog-pair-next").disabled =
+      pairs.length < 2 || state.pairIndex >= pairs.length - 1;
+
+    ["history_0", "history_1"].forEach(history => {
+      const button = document.getElementById(`dialog-${history.replace("_", "-")}`);
+      button.disabled = !pair;
+      button.classList.toggle("selected", state.history === history);
+      button.setAttribute("aria-pressed", String(state.history === history));
     });
-    if (tabs) dialogControls.append(tabs);
-    media.append(createOutputVideo(branch, true), createInputImage(pair, branch, true));
-    addDetail("任务", activeTask.name || activeTask.id);
+
+    media.replaceChildren(createInputPanel(pair, branch, true), createOutputPanel(branch, true));
+
+    const details = document.getElementById("result-details");
+    details.replaceChildren();
+    addDetail("任务", taskName);
     addDetail("Harness", harness.name || harness.id);
     addDetail("模型", model.name || model.id);
-    if (!pair.legacy) {
-      addDetail("Pair", `${pair.id || "—"}（${dialogState.pairIndex + 1}/${pairs.length}）`);
-      addDetail("History", dialogState.history);
-    }
-    addDetail("结果", successBadge(branch));
-    const tokenFields = [["inputTokens", "输入 tokens"], ["outputTokens", "输出 tokens"], ["totalTokens", "总 tokens"]];
+    addDetail("Pair", pair ? pair.id : "暂无 Pair");
+    addDetail("History", state.history);
+    addDetail("结果", statusInfo(branch.success).label);
+
+    const tokenFields = [
+      ["inputTokens", "输入 tokens"],
+      ["outputTokens", "输出 tokens"],
+      ["totalTokens", "总 tokens"]
+    ];
     let hasTokens = false;
     tokenFields.forEach(([key, label]) => {
       if (hasValue(branch[key])) {
@@ -404,39 +512,78 @@
       }
     });
     if (!hasTokens) addDetail("Tokens", "待导入");
-    const cost = hasValue(branch.cost) ? `${branch.cost}${hasValue(branch.currency) ? ` ${branch.currency}` : "（币种待导入）"}` : "待导入";
-    addDetail(`价格${isDemo ? " · demo" : ""}`, cost);
-    if (hasValue(branch.rounds)) addDetail(`执行轮数${isDemo ? " · demo" : ""}`, branch.rounds);
-    if (!pair.legacy) {
-      compare.hidden = false;
-      compare.append(
-        document.createTextNode("成对对照："),
-        document.createTextNode(`history_0 `), successBadge(branchOf(pair, "history_0")),
-        document.createTextNode(" · history_1 "), successBadge(branchOf(pair, "history_1"))
+
+    addDetail(`价格${isDemo ? " · demo" : ""}`, formatCost(branch));
+    addDetail(
+      `执行轮数${isDemo ? " · demo" : ""}`,
+      hasValue(branch.rounds) ? String(branch.rounds) : "待导入"
+    );
+
+    const notes = [];
+    if (hasValue(pair?.note)) notes.push(String(pair.note));
+    if (hasValue(branch.note)) notes.push(String(branch.note));
+    addDetail("备注", notes.length ? notes.join("；") : "暂无备注");
+
+    const comparison = document.getElementById("pair-comparison-content");
+    comparison.replaceChildren();
+    ["history_0", "history_1"].forEach(history => {
+      const comparisonBranch = pair && isRecord(pair[history]) ? pair[history] : {};
+      const item = element("div", "comparison-item");
+      item.append(
+        element("span", "comparison-history", history),
+        resultBadge(comparisonBranch.success)
       );
-    }
-    const notes = [pair.note, branch.note].filter(hasValue);
-    if (notes.length) {
-      note.hidden = false;
-      note.textContent = notes.join(" ");
-    }
+      comparison.append(item);
+    });
   }
 
-  function openResult(model, harness, selection) {
-    previousFocus = document.activeElement;
-    dialogState = { model, harness, pairIndex: selection.pairIndex, history: selection.history };
+  function openResult(model, harness, pairs, state, trigger) {
+    previousFocus = trigger || document.activeElement;
+    const { key } = getCellState(activeTask, model, harness);
+    dialogContext = { task: activeTask, model, harness, pairs, state, key };
     renderDialog();
     dialog.showModal();
     document.body.classList.add("modal-open");
     document.getElementById("dialog-close").focus();
   }
 
+  document.getElementById("dialog-pair-prev").addEventListener("click", () => {
+    if (!dialogContext || dialogContext.pairs.length < 2) return;
+    dialogContext.state.pairIndex = Math.max(0, dialogContext.state.pairIndex - 1);
+    renderDialog();
+  });
+
+  document.getElementById("dialog-pair-next").addEventListener("click", () => {
+    if (!dialogContext || dialogContext.pairs.length < 2) return;
+    dialogContext.state.pairIndex = Math.min(
+      dialogContext.pairs.length - 1,
+      dialogContext.state.pairIndex + 1
+    );
+    renderDialog();
+  });
+
+  ["history_0", "history_1"].forEach(history => {
+    document.getElementById(`dialog-${history.replace("_", "-")}`).addEventListener("click", () => {
+      if (!dialogContext || !currentDialogPair()) return;
+      dialogContext.state.history = history;
+      renderDialog();
+    });
+  });
+
   document.getElementById("dialog-close").addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", event => {
     if (event.target !== dialog) return;
     const bounds = dialog.getBoundingClientRect();
-    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+    if (
+      event.clientX < bounds.left ||
+      event.clientX > bounds.right ||
+      event.clientY < bounds.top ||
+      event.clientY > bounds.bottom
+    ) {
+      dialog.close();
+    }
   });
+
   // 原生 dialog 处理 Esc、焦点约束；关闭时停止播放并还原触发方格的焦点。
   dialog.addEventListener("close", () => {
     media.querySelectorAll("video").forEach(video => {
@@ -445,10 +592,22 @@
       video.load();
     });
     media.replaceChildren();
-    dialogState = null;
     document.body.classList.remove("modal-open");
-    if (previousFocus?.isConnected) previousFocus.focus();
+
+    const closedContext = dialogContext;
+    dialogContext = null;
+    if (closedContext) renderMatrix();
+
+    const focusTarget = closedContext
+      ? Array.from(matrix.querySelectorAll(".result-main")).find(main =>
+          main.dataset.modelId === String(closedContext.model.id) &&
+          main.dataset.harnessId === String(closedContext.harness.id)
+        )
+      : previousFocus;
+    if (focusTarget?.isConnected) focusTarget.focus();
+    else if (previousFocus?.isConnected) previousFocus.focus();
   });
+
   search.addEventListener("input", renderTaskList);
   window.addEventListener("hashchange", restoreTask);
   window.addEventListener("popstate", restoreTask);

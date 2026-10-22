@@ -48,6 +48,11 @@ stirrup: {
 3. 在 `data.js` 对应方格的 `pairs` 数组里加一条 pair：`history_0`、`history_1` 两个键都要有（没数据写 `{}`），每组填 `video`、`success`（`true` 成功 / `false` 失败 / 不填 = 未知，只能填 true/false）、tokens 与价格。
 4. 刷新页面，在方格内切换到这个 pair 检查输入图、视频、成功/失败徽标与弹窗详情。
 
+> 批量导入前可用 `tools/import_prep.py` 预检：它会核对视频/输入图的文件名、查体积（对照 GitHub 100MB / 25MB 两条线）、
+> 按 pair 检查缺件，并直接生成可粘贴进 `data.js` 的 pairs 片段。用法：
+> `python3 tools/import_prep.py <暂存目录> --task cover_blocks [--success-map success.csv]`。
+> `success.csv` 无表头，每行 `pair_id,history,true|false`；不提供时片段里 success 写 `null`（页面显示"结果待导入"），脚本不会自行推断成功失败。
+
 ## 3. 新增任务 / harness / 模型
 
 所有改动都只涉及 `data.js`，不需要改 HTML 或页面逻辑：
@@ -119,3 +124,28 @@ node --check data.js
 ```
 
 真实实验导入前，请确认全部 demo 数值已删除或替换、币种与计价记录准确，并逐一检查视频可播放。
+## Pair 与 History 数据导入
+
+每个任务、模型和 harness 的组合可以包含多个 Pair。Pair 表示一条成对比较记录，包含共享输入图片，以及 `history_0` 和 `history_1` 两个分支。矩阵方格可直接切换 Pair 与 History；打开详情后也能切换，并查看当前分支的结果、tokens、价格、轮数和备注，以及两组 History 的成功/失败对照。
+
+导入一个 Pair 的步骤：
+
+1. 将输入图片放入站点目录，例如 `images/cover_blocks/pair_003_input.svg`。图片路径使用相对路径。
+2. 在 `data.js` 的 `results[taskId][modelId][harnessId].pairs` 数组中新增 Pair 对象。
+3. 设置唯一的 `id`，填写共享输入图片路径，并且同时提供 `history_0` 与 `history_1`。某个分支尚无数据时写 `{}`。
+4. 在已有分支中按需补充视频、结果状态、tokens、价格、币种、轮数与备注。视频和封面也使用相对路径；视频未导入时可填 `video: ""`。
+5. 保存后在浏览器打开页面。若 Pair 没有图片、视频文件缺失或视频无法解码，页面会显示占位内容。
+
+字段说明：
+
+- `id`：Pair 标识，例如 `"pair_003"`。
+- `inputImage`：Pair 共享的输入图路径，可省略。分支的 `image` 字段若存在，会优先用于该 History。
+- `note`：Pair 级备注，可省略；分支也可以有自己的 `note`。
+- `history_0`、`history_1`：必须同时存在。每个分支都可填写 `image`、`video`、`poster`、`success`、`inputTokens`、`outputTokens`、`totalTokens`、`cost`、`currency`、`rounds` 和 `note`。
+- `success`：仅使用 `true` 或 `false`；省略或填 `null` 时显示“未知”。页面不会从视频或其他字段推断结果。
+- Tokens：字段可分别省略。只填 `totalTokens` 时页面只显示总数，不会补造输入或输出拆分。
+- `cost` 与 `currency`：价格和可选币种；只填写价格而没有币种时，详情会标明币种待导入。
+- `rounds`：可选执行轮数。
+- `video` 与 `poster`：可选的相对路径。无视频或加载失败时页面会显示提示，不会留下坏播放器。
+
+没有 `pairs`、而是直接在组合对象上填写旧版 `video`、tokens 或 `success` 等字段的数据仍可显示为单条兼容记录。新数据建议统一使用 Pair 结构。
