@@ -135,3 +135,34 @@ dialog::backdrop { background: #14233a99; backdrop-filter: blur(4px); }
   .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* pair / history 切换与输入输出分区（2026-10-22 改造） */
+.pair-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
+.pair-nav { width: 24px; height: 24px; padding: 0; border: 1px solid var(--line); background: #f8fafd; border-radius: 6px; color: #6389bf; font-size: 14px; line-height: 1; }
+.pair-nav:hover:not(:disabled) { background: #eaf1fc; color: var(--blue); }
+.pair-nav:disabled { opacity: .35; cursor: default; }
+.pair-label { font-size: 10px; font-weight: 600; color: #71829c; overflow-wrap: anywhere; text-align: center; }
+.history-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.history-tab { flex: 1; padding: 5px 0; font-size: 10px; border: 1px solid var(--line); background: #fff; border-radius: 6px; color: #7a879b; }
+.history-tab.active { background: #ecf3ff; color: #2563cf; border-color: #bcd2f5; font-weight: 650; }
+.media-block { margin-bottom: 8px; }
+.media-block:last-child { margin-bottom: 0; }
+.media-label { display: block; font-size: 9px; letter-spacing: .06em; color: #8794a9; margin-bottom: 4px; }
+.input-wrapper { position: relative; aspect-ratio: 16 / 7; background: #f0f4fa; overflow: hidden; border-radius: 7px; }
+.input-wrapper img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.input-wrapper .empty-state { height: 100%; min-height: 0; }
+.input-wrapper.large { aspect-ratio: auto; background: #f7fafd; border: 1px solid var(--line); }
+.input-wrapper.large img { height: auto; max-height: 320px; object-fit: contain; }
+.cell-media { cursor: pointer; border-radius: 7px; }
+.cell-media:focus-visible { outline: 3px solid #90b9ff; outline-offset: 3px; }
+.cell-media:hover .empty-state { border-color: #8eb1ed; background: #f0f6ff; color: #5e83bd; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 650; line-height: 1.6; vertical-align: middle; }
+.badge.success { background: #e7f6ee; color: #177245; border: 1px solid #bfe6cf; }
+.badge.failure { background: #fdeeee; color: #b3372f; border: 1px solid #f3c2bd; }
+.badge.unknown { background: #f1f4f8; color: #7d8a9c; border: 1px solid #dde4ec; }
+.cell-status .badge { margin-right: 2px; }
+.dialog-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin: 0 28px 14px; }
+.dialog-controls .pair-bar { margin-bottom: 0; gap: 10px; }
+.dialog-controls .history-tabs { margin-bottom: 0; min-width: 210px; }
+.result-compare { font-size: 12px; color: #5f7189; line-height: 2; padding-top: 14px; border-top: 1px solid var(--line); margin: 18px 0 0; }
+@media (max-width: 520px) { .dialog-controls { margin-inline: 18px; } }

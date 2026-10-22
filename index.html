@@ -36,9 +36,9 @@
           <div><div class="eyebrow section-eyebrow">TASK EXPLORER</div><h2 id="task-title">任务视频矩阵</h2><p id="task-description" class="task-description"></p></div>
           <span class="demo-badge">DEMO</span>
         </div>
-        <div class="matrix-toolbar"><p id="matrix-summary" aria-live="polite"></p><span class="interaction-hint">点击方格查看视频与用量 <span aria-hidden="true">↗</span></span></div>
+        <div class="matrix-toolbar"><p id="matrix-summary" aria-live="polite"></p><span class="interaction-hint">方格内可切换 pair 与 history，点击方格查看详情 <span aria-hidden="true">↗</span></span></div>
         <div id="matrix-container"></div>
-        <p class="matrix-footnote">列：Harness · 行：模型 <span>视频与用量独立配置，空方格也可查看详情。</span></p>
+        <p class="matrix-footnote">列：Harness · 行：模型 <span>每个方格含多个 pair；输入为图片、输出为视频，徽标为该 case 的成功/失败。</span></p>
       </section>
     </main>
 
@@ -48,8 +48,9 @@
     <dialog id="result-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-subtitle">
       <div class="dialog-shell">
         <header class="dialog-header"><div><span class="eyebrow">ROLLOUT DETAILS · DEMO</span><h2 id="dialog-title"></h2><p id="dialog-subtitle"></p></div><button id="dialog-close" class="close-button" type="button" aria-label="关闭详情">×</button></header>
+        <div id="dialog-controls" class="dialog-controls"></div>
         <div id="dialog-media" class="dialog-media"></div>
-        <div class="dialog-details"><p class="dialog-demo">示例数据（demo），待替换 · 非真实实验结果</p><dl id="result-details" class="detail-grid"></dl><p id="result-note" class="result-note" hidden></p></div>
+        <div class="dialog-details"><p class="dialog-demo">示例数据（demo），待替换 · 非真实实验结果</p><dl id="result-details" class="detail-grid"></dl><p id="result-compare" class="result-compare" hidden></p><p id="result-note" class="result-note" hidden></p></div>
       </div>
     </dialog>
   </body>
